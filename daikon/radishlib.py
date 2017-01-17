@@ -571,18 +571,24 @@ def drawRadishContour(rimg, points, dotsize =1,ldotsize=3, sdotsize=10,interval=
 # 各連続３点それぞれについて３つのベクトルを求める
 # pts サンプル点
 # samplefactor  この数でサンプル数を割った値だけ離れた3点で曲率を求める
-# masklen ミディアンフィルタで雑音除去する際に、前後この値まで離れた点を使う
+# median ミディアンフィルタをかけるかどうかの真理値
+# mmasklen ミディアンフィルタで雑音除去する際に、前後この値まで離れた点を使う
+# smooth 平滑化を行うかどうかの真理値
+# smasklen 平滑化フィルタのサイズ　2*smasklen + 1 のデータの平均が使われる
 # open  両端が開いている場合True、　閉路の場合　False
 #     スケルトンの曲率を求める場合は　　True , 輪郭の場合は False
-def curvature(pts, samplefactor = 200,masklen=20, open=False):
+def curvature(pts, samplefactor = 200, mmasklen=-1, smasklen =-1, open=False ):
     
     sd = int(len(pts)/samplefactor)  # 曲率計算に用いるサンプル３点の間隔
     print("曲率計算のためのサンプル間距離は",sd)
     
     # ミディアンフィルタのサイズが指定されていない場合は sd をサイズとして用いる
-    if masklen < 0:  
-        masklen = sd
-    print("ミディアンフィルタのサイズ", masklen)
+    if mmasklen < 0:  
+        mmasklen = sd
+    print("ミディアンフィルタのサイズ", mmasklen)
+    if smasklen < 0:  
+        smasklen = sd
+    print("平滑化フィルタのサイズ", smasklen)
 
     v1 = np.zeros_like(pts)
     v2 = np.zeros_like(pts)
@@ -610,10 +616,16 @@ def curvature(pts, samplefactor = 200,masklen=20, open=False):
     cuv = 2*cp/ppp
     
     # デジタルノイズの除去のためにミディアンフィルタをかける
-    if masklen > 0:
-        cvm =  copy(np.r_[cuv[-masklen:],cuv,cuv[0:masklen]])
+    if mmasklen > 0:
+        cvm =  copy(np.r_[cuv[-mmasklen:],cuv,cuv[0:mmasklen]])
         for  i in range(len(cuv)):
-            cuv[i] = np.median(cvm[i:i+2*masklen]) 
+            cuv[i] = np.median(cvm[i:i+2*mmasklen]) 
+            
+    # smooth = True の場合、平滑化を施す
+    if smasklen > 0 :
+        cvm =  copy(np.r_[cuv[-smasklen:],cuv,cuv[0:smasklen]])
+        for  i in range(len(cuv)):
+            cuv[i] = np.average(cvm[i:i+2*smasklen])
      
     # 始点から曲線に沿って測った距離を各点について求める。
     # samplefactor で指定した数のサンプル点をマイルストーンとし、マイルストーン間は曲率から距離を求める
@@ -656,7 +668,7 @@ def curvature(pts, samplefactor = 200,masklen=20, open=False):
     print("曲率最大の点は",cvmaxind,"番のサンプル点で、曲率は",  cuv[cvmaxind],"座標は", tip)
     print("曲率最小の点は",cvminind,"番のサンプル点で、曲率は",  cuv[cvminind],"座標は", tipmin)
     
-    return dl , cuv, tip  
+    return dl , cuv, (int(tip[0]),int(tip[1])) , (int(tipmin[0]),int(tipmin[1]))
     # pts: サンプル点,  
     # dl : サンプルの始点から測った折れ線近似された輪郭に沿って各点までの距離
     # cuv: 曲率のリスト
@@ -664,22 +676,50 @@ def curvature(pts, samplefactor = 200,masklen=20, open=False):
 '''
 山登りによるスケルトン抽出
 
-radiusfunc(invert)
 軸に沿った距離を横軸，　その点の距離データを縦軸にしたグラフを描く
 （距離データとは軸上の点から表皮までの最短距離．　　中央辺りでは径に相当する
 
 '''   
-# スケルトン追跡
-# 座標(x,y) の８近傍で最も黒画素までの距離の大きな点を求める
 
-def get8nb(x,y,im):
+# 座標(x,y) の８近傍データの取得
+# 方向番号は右を０として、時計回り
+#        5  6  7
+#        4     0
+#        3  4  1
+def get8nb(point,im):
+     (x,y)=point
      # (x,y)の画素を中心に、右隣から時計回りに8近傍データを取得
      netmp = np.array([im[y,x+1],im[y+1,x+1],im[y+1,x],im[y+1,x-1],im[y,x-1], im[y-1,x-1],im[y-1,x],im[y-1,x+1]])
      return netmp
 
+# 　点（ｘ，ｙ）の上下左右斜め8方向のうち、（ｍｘ，ｍｙ）に向う方向に近い方向番号を求める
+def decideDirection(point,targetpoint):
+    (x,y)=point
+    (mx,my)=targetpoint
+    R2 = np.sqrt(2)/2.0
+    vec = np.array([[1,0],[R2,R2],[0,1],[-R2,R2],[-1,0],[-R2,-R2],[0,-1],[R2,-R2]])
+    dx = mx - x
+    dy = my - y
+    dotp = np.dot(vec, np.array([dx,dy]))  # 内積のリスト
+    return np.argmax(dotp)
+
 # 最大曲率点からのスケルトントレースで次の点を決定する関数
-# x,y 現在地点、次の地点を決める基準方向、sx,sy 最大曲率点、para1 斜め方向の割引率
-def getNextRidge(x,y,direct,im,cim, sx,sy, para1 = 0.998):
+#  phase 追跡のフェーズ　　　
+#      0  初期探索フェーズ  距離データが減少しても追跡を続ける
+#      1  距離データが減少する場合は追跡を打ち切る
+#  point 現在地点、次の地点を決める基準方向、(100,200) のようなタプル表現
+#  startpoint  追跡を開始した最初の座標　　この位置から遠ざかるように点を選択する
+# 　direct 現時点の追跡方向　　この方向の左右45度までを候補とする
+#  distances  作業用距離データ 
+#  cim 現地点の距離データ　　作業用データは書き換えられているので書き換え前の値が必要 
+#  para1 斜め方向の割引率
+#  para2 開始点からの距離の評価重み
+#          最大径のポイントまでは黒画素からの距離と開始点からの距離を１：１の重みで評価して
+#          次のスケルトンの点を選ぶ。最大径のポイントを超えた後はこの 1: para2 の重みで評価する
+def getNextRidge13(phase, point,startpoint,direct,distances,cim, para1 = 0.998, para2 = 1.5):
+    (x,y) =  point
+    (sx,sy) = startpoint
+    im = distances  # 変数名が長いので便宜的に短い名で置き換え
     if im[y,x] == 0:
         print("Out of object area")
         return None,None,None
@@ -688,7 +728,6 @@ def getNextRidge(x,y,direct,im,cim, sx,sy, para1 = 0.998):
     # im は作業用距離データ
     # cimは(x,y)の距離データ
     R2 = np.sqrt(2.0)/2.0
-    VEC =  np.array([[1,0],[R2,R2],[0,1],[-R2,R2],[-1,0],[-R2,-R2],[0,-1],[R2,-R2]])
     nx = x + [1,1,0,-1,-1,-1,0,1][direct]
     ny = y + [0,1,1,1,0,-1,-1,-1][direct]
     nRx = x + [1,1,0,-1,-1,-1,0,1][(direct+1)%8]
@@ -696,6 +735,7 @@ def getNextRidge(x,y,direct,im,cim, sx,sy, para1 = 0.998):
     nLx = x + [1,1,0,-1,-1,-1,0,1][(direct-1)%8]
     nLy= y + [0,1,1,1,0,-1,-1,-1][(direct-1)%8]
     nb3=np.array( [im[nLy,nLx], im[ny,nx],im[nRy,nRx]])
+        
     # 斜め方向は移動距離が違い、上下左右より若干有利になるので少し割り引いて評価
     if direct % 2 == 0:
         if nb3[0] > 0:
@@ -704,72 +744,169 @@ def getNextRidge(x,y,direct,im,cim, sx,sy, para1 = 0.998):
             nb3[2] = cim + para1*(nb3[2]-cim) 
     else:
         if nb3[1] > 0:
-             nb3[1] = cim + para1*(nb3[1]-cim)   
-                
-    # 初期位置に近づく方向は除外する。また、目標方向とその左右が同点なら目標方向を優先する。
+             nb3[1] = cim + para1*(nb3[1]-cim)         
     
+    VEC=np.array([1,R2,1,R2,1,R2,1,R2])
+    drN = VEC[direct%8]
+    drL = VEC[(direct-1)%8]
+    drR = VEC[(direct+1)%8]
+
+    # 探索開始点からの距離の計算 　斜め方向の移動は上下より大きいので有利（不利）にならないよう割り引いて評価
     distance0 = np.linalg.norm([sx-x,sy-y])
-    distanceN = np.linalg.norm([sx-nx,sy-ny])
-    distanceR = np.linalg.norm([sx-nRx,sy-nRy])
-    distanceL = np.linalg.norm([sx-nLx,sy-nLy])
-   
+    distanceN = np.linalg.norm([sx-(x+drN*(nx-x)),sy-(y+drN*(ny-y))])
+    distanceR = np.linalg.norm([sx-(x+drR*(nRx-x)),sy-(y+drR*(nRy-y))])
+    distanceL = np.linalg.norm([sx-(x+drL*(nLx-x)),sy-(y+drL*(nLy-y))])
+    # print(u"{:3.3f},{:3.3f},{:3.3f}".format(distance0,distanceN,distanceR,distanceL))
+
+    # 戻ってしまう地点の評価値を０にして候補からはずす
     if distanceN <= distance0:
         nb3[1] = 0
-    if distanceR <= distance0  or distanceR == distanceN or nb3[0] == nb3[1]:
+    if distanceR <= distance0:
         nb3[2] = 0
-    if distanceL <= distance0  or distanceL == distanceN or nb3[2] == nb3[1]:
+    if distanceL <= distance0:
         nb3[0] = 0
-       
-    # print("{:4.4f} {:4.4f}  {:4.4f}  {:4.4f} ".format(distance0,distanceN-distance0,distanceR-distance0,distanceL-distance0))
+    
+    if 0 < phase < 2:   # 黒画素からの距離と開始点からの距離の和で評価する
+        nb3[0] += distanceL
+        nb3[1] += distanceN
+        nb3[2] += distanceR
+    elif phase == 2 :  # 最大径地点を超えた後は開始点からの距離の重みを変える
+        nb3[0] += para2*distanceL
+        nb3[1] += para2*distanceN
+        nb3[2] += para2*distanceR     
+    
+    # 3地点から最も内部にある点を選ぶ
     if np.max(nb3) > 0:        
         idx = np.argmax(nb3) # 3方向の中で最も大きな値のインデックス
         nx = x + [1,1,0,-1,-1,-1,0,1][(direct+idx-1)%8]
         ny = y + [0,1,1,1,0,-1,-1,-1][(direct+idx-1)%8]
-        # print("idx",idx,"next","direct",direct, "direct+idex-1",direct+idx-1,nx,ny)
-        return (direct+idx-1)%8, nx, ny
-    else :
-        nb = get8nb(x,y,im)
-        idx = np.argmax(nb) # 3方向がすべて０の場合は８近傍で最も大きな値のインデックス
+        idx = (direct+idx-1)%8     
+    else: # 3方向がすべて０の場合は８近傍から探す（普通そうならないだろう）
+        nb = get8nb((x,y),im)
+        idx = np.argmax(nb) 
         nx = x + [1,1,0,-1,-1,-1,0,1][idx]
         ny = y + [0,1,1,1,0,-1,-1,-1][idx]
-        print("No way!")
-        return idx, nx, ny
+        if np.max(nb) <= 0:
+            print("No way!")
+            
+    # 探索打ち切りの判定    
+    DECTRERANCE = 0.8    
+    # この値までなら距離が減ったとしてもトレースを続ける
+    # 位置が量子化されているため少しの現象は許容する必要がある。きれいな形状なら 0.2 ぐらいでもOK
+    # if im[ny,nx] < cim:
+    #     print("{:4.4f}  {:4.4f} {:4.4f}".format(cim, im[ny,nx], im[ny,nx]-cim))
+           
+    if im[ny,nx] < cim-DECTRERANCE and phase > 0 :  # 距離の極大点を超えたと判断
+        overflag = True 
+    else:
+        overflag = False
+    return idx, (nx, ny), overflag
 
-# ******* 最大曲率点からのスケルトントレース
-# sx,sy スタート地点、direct 初期追跡方向、
-# phaseswitch この太さの地点を通り過ぎるまでは周辺が黒画素から距離１でも先に進む
-# para1 斜め方向の割引率
-def traceRidges1(sx,sy,direct,img, phaseswitch=5, para1 = 0.998):
+''' ******* 指定点からのスケルトントレース　方法１
+
+ point = (sx,sy) 追跡開始点、
+ direct  = 0~7  初期追跡方向、
+　　　　　　5   6   7
+     4   　　　   0　　　　　  右方向を０とし、時計回りに、１，２，３
+     3   2   1
+ distances 距離データの２次元配列
+ phaseswitch  この太さの地点を通り過ぎるまでは周辺が黒画素から距離１でも先に進む
+ para1 斜め方向の割引率
+ para2 後述
+'''
+''' 【概要】
+追跡開始点から direct の方向に、次式の評価値の高い点をピックアップすることでスケルトンを得る。
+
+評価値　＝　黒画素からの距離　＋　 para2 * 開始点からの距離
+
+停止条件：最大径地点通過後、距離１の点にたどり着いた
+
+ただし、phaseswitch で指定する距離の点に遭遇するまでは距離1の点があったとしても追跡を続ける
+返り値 skel は [x座標、y座標、距離] のリスト（numpy array）
+
+'''
+def traceRidges1(point,direct,distances, phaseswitch=5, para1 = 0.998, para2 = 1.5):
+    (sx,sy) = point
     USED = -99999
-    cim = img[sy,sx]
+    im = distances
+    cim = im[sy,sx]
     skel=[[sx,sy,cim]]
-    img[sy,sx] = USED
-    mv = 1
+    im[sy,sx] = USED
     phase = 0
     x = sx
     y = sy
-    while  (phase == 0 and mv >  0.4 )  or ( phase > 0 and mv > 1) :
-        if phase == 0 and mv > phaseswitch : 
+    while  phase == 0   or ( phase > 0 and cim > 1) :
+        if phase == 0 and cim > phaseswitch : 
             phase = 1  # トレースがある程度太い部分まで至った
-        direct, x,y = getNextRidge(x,y,direct,img,cim,sx,sy, para1=0.998)
-        mv = img[y,x]
-        if mv > 0:
-            skel.append([x,y,mv])
-            img[y,x] = USED
+        direct, (x,y),overflag = getNextRidge13(phase,(x,y),(sx,sy),direct,distances,cim, para1=para1, para2=para2)
+        if overflag:
+            phase = 2
+        cim = im[y,x]
+        if cim > 0:
+            skel.append([x,y,cim])
+            im[y,x] = USED
             mx1 = x + [1,1,0,-1,-1,-1,0,1][(direct+5)%8]
             my1 = y + [0,1,1,1,0,-1,-1,-1][(direct+5)%8]
             mx2 = x + [1,1,0,-1,-1,-1,0,1][(direct+3)%8]
             my2 = y + [0,1,1,1,0,-1,-1,-1][(direct+3)%8]  
-            img[my1,mx1] = USED
-            img[my2,mx2] = USED
-    return skel    
+            # im[my1,mx1] = USED
+            # im[my2,mx2] = USED
+    return np.array(skel)     
     
-    
-def getNextRidge2(x,y,direct, im ,cim, mx,my, para1, para2):
-    # (x,y) の次の点を direct 方向とその左右のうちから選ぶ。
+
+''' ******* 指定点からのスケルトントレース　方法2
+
+ point = (sx,sy) 追跡開始点、
+ targetpoint = (mx,my)  目標点　　　通常は最大径地点を指定する
+ direct  = 0~7  初期追跡方向、
+　　　　　　5   6   7
+     4   　　　   0　　　　　  右方向を０とし、時計回りに、１，２，３
+     3   2   1
+ distances 距離データの２次元配列
+ phaseswitch  この太さの地点を通り過ぎるまでは周辺が黒画素から距離１でも先に進む
+ para1 斜め方向の割引率
+ para2 角度の偏移の排除基準
+'''
+''' 【概要】
+追跡開始点から direct の方向に、黒画素からの距離　＋　 para2 * 開始点からの距離
+
+停止条件：最大径地点通過後、距離１の点にたどり着いた
+
+ただし、phaseswitch で指定する距離の点に遭遇するまでは距離1の点があったとしても追跡を続ける
+返り値 skel は [x座標、y座標、距離] のリスト（numpy array）
+
+'''
+
+def getNextRidge2(point,targetpoint, distances ,cim, para1, para2):
+    # point （= タプル(x,y)） で表される点の次の点を direct 方向とその左右のうちから選ぶ。
     # direcct は方向
     # im は作業用距離データ
     # cimは(x,y)の距離データ
+    im = distances
+    (x,y)=point
+    (mx,my)=targetpoint
+    if mx > x:
+        if my < y :
+            direct = 7
+        elif  my < y:
+            direct = 1
+        else:
+            direct = 0
+    elif  mx < x :
+        if my < y :
+            direct = 5
+        elif  my < y:
+            direct = 3
+        else:
+            direct = 4
+    else :
+        if my < y :
+            direct = 6
+        elif  my < y:
+            direct = 2
+        else:
+            direct = 8
+           
     R2 = np.sqrt(2.0)/2.0
     VEC =  np.array([[1,0],[R2,R2],[0,1],[-R2,R2],[-1,0],[-R2,-R2],[0,-1],[R2,-R2]])
     nx = x + [1,1,0,-1,-1,-1,0,1][direct]
@@ -804,22 +941,7 @@ def getNextRidge2(x,y,direct, im ,cim, mx,my, para1, para2):
     elif idx == 2:
         nx = nRx
         ny = nRy
-    return  nx, ny
-
-
-
-# 上下左右斜め8方向のうち、目標に向う方向に近い方向番号を求める
-# 方向番号は右を０として、時計回り
-#        5  6  7
-#        4     0
-#        3  4  1
-def decideDirection(x,y,mx,my):
-    R2 = np.sqrt(2)/2.0
-    vec = np.array([[1,0],[R2,R2],[0,1],[-R2,R2],[-1,0],[-R2,-R2],[0,-1],[R2,-R2]])
-    dx = mx - x
-    dy = my - y
-    dotp = np.dot(vec, np.array([dx,dy]))  # 内積のリスト
-    return np.argmax(dotp)
+    return  (nx, ny)
 
 # *******
 # 目標(maxX, maxY) 向きの３方向のうちで最大傾斜方向へ、目標に至るまで進む
@@ -827,19 +949,71 @@ def decideDirection(x,y,mx,my):
 # direct = 4  左向きにサーチ
 # para1 斜め移動の割引率　 0.8〜1.0  default 0.998
 # para2 角度の偏移の排除基準  cos の値で指定　　０~１　　default 0.25
-def traceRidges2(x,y,dist, mx,my, para1= 0.998,para2 = 0.25):
+def traceRidges2(point,targetpoint,distances, para1= 0.998,para2 = 0.25):
+    (x,y)=point
+    (mx,my)=targetpoint
     USED = -99999
-    cim = dist[y,x]
-    skel = [[x,y,dist[y,x]]]
-    dist[y,x] = USED
+    cim = distances[y,x]
+    skel = [[x,y,distances[y,x]]]
+    distances[y,x] = USED
     while  (x - mx)*(x - mx)+(y - my)*(y - my) > 2:       
-        direct = decideDirection(x,y,mx,my)
-        x,y = getNextRidge2(x,y,direct,dist,cim,mx,my, para1=para1,para2=para2)
-        skel.append([x,y,dist[y,x]])
-        # print(u"{}  (x,y) {:4d} {:4d}, d {:7.3f}, goal {:4d}　{:4d}, dif {:3d} {:3d}".format(direct,x,y,dist[y,x],mx,my,mx-x,my-y))
-        dist[y,x] = USED    
+        direct = decideDirection((x,y),(mx,my))
+        (x,y) = getNextRidge2((x,y),(mx,my), distances,cim,para1=para1,para2=para2)
+        skel.append([x,y,distances[y,x]])
+        # print(u"{}  (x,y) {:4d} {:4d}, d {:7.3f}, goal {:4d}　{:4d}, dif {:3d} {:3d}".format(direct,x,y,distances[y,x],mx,my,mx-x,my-y))
+        distances[y,x] = USED    
+    return np.array(skel)
 
-    return skel
+
+
+# ******* 最大曲率点からのスケルトントレース  3
+# point = (sx,sy) 追跡開始点、
+# direct 初期追跡方向、
+# distances  距離データの配列
+# phaseswitch この太さの地点を通り過ぎるまでは周辺が黒画素から距離１でも先に進む
+# para1 斜め方向の割引率
+def traceRidges3(point,direct,distances, phaseswitch=20, para1 = 0.998):
+    USED = -99999
+    (x,y) = (sx,sy) = point
+    dt = distances
+    cim = dt[y,x]
+    skel=[[x,y,cim]] 
+    dt[y,x] = USED
+    phase = 0
+    overflag = False
+    # まず経路が最も太くなる地点まで追跡（while ループ）
+    while  not overflag :
+        if phase == 0 and cim > phaseswitch  : 
+            phase = 1  # トレースがある程度太い部分まで至った
+        direct, (nx,ny), overflag = getNextRidge13(phase, (x,y),(sx,sy),direct,distances,cim, para1=para1)
+        if overflag:
+            phase = 2
+        cim = dt[ny,nx]
+        if  not overflag and cim > 0:   # cim>0 は不要のはずだが念のため
+                skel.append([nx,ny,cim])
+                dt[y,x] = USED
+                mx1 = x + [1,1,0,-1,-1,-1,0,1][(direct+6)%8]
+                my1 = y + [0,1,1,1,0,-1,-1,-1][(direct+6)%8]
+                mx2 = x + [1,1,0,-1,-1,-1,0,1][(direct+2)%8]
+                my2 = y + [0,1,1,1,0,-1,-1,-1][(direct+2)%8]  
+                # dt[my1,mx1] = USED
+                # dt[my2,mx2] = USED
+                x, y  = nx, ny
+    # 最も太い場所を超えたら山登り追跡はできない
+    # 以降は直線的に進むことにする。問題はどの方向に進むかであるが、
+    # 現地点を(x,y) 、現地点の距離データを radius としたときに、
+    # これまで得られた skelton の中で、現地点から radius 分だけ戻った地点と現地点を結ぶ
+    # 直線上を、radius 分だけ追跡して探索を終えることにする
+    radius = int( dt[y,x])
+    baseX, baseY = skel[-radius][0], skel[-radius][1]
+    dx,dy = x - baseX, y-baseY
+    inclination = float(dy)/float(dx)
+    goalX, goalY = x+ dx , y + dy
+    for i in range(x,goalX,np.sign(dx)):
+        j =  int(inclination *( i - x)  + y)
+        skel.append([i, j,dt[j,i]])
+    return np.array(skel) 
+
 
 # スケルトンの位置データ補正
 def recalcDistanceP(skdata,normP):
