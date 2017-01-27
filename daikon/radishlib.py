@@ -795,8 +795,8 @@ def getNextRidge13(phase, point,startpoint,direct,distances,cim, para1 = 0.998, 
     # 位置が量子化されているため少しの現象は許容する必要がある。きれいな形状なら 0.2 ぐらいでもOK
     # if im[ny,nx] < cim:
     #     print("{:4.4f}  {:4.4f} {:4.4f}".format(cim, im[ny,nx], im[ny,nx]-cim))
-           
-    if im[ny,nx] < cim-DECTRERANCE and phase > 0 :  # 距離の極大点を超えたと判断
+            
+    if im[ny,nx] < cim-DECTRERANCE : #  and phase > 0:   距離の極大点を超えたと判断
         overflag = True 
     else:
         overflag = False
