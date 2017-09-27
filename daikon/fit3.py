@@ -16,10 +16,10 @@ def fit3(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返し
 
 
     def model(a,b,c,x):  # 1/(1+exp(-a*(x-c)*(1+ exp(-b*(x-c)))))
-                x_c = tf.sub(x,c) # x - c
-                tmpB = tf.exp(-tf.mul(b,x_c))   # exp( - b ( x-c) )
+                x_c = tf.subtract(x,c) # x - c
+                tmpB = tf.exp(-tf.multiply(b,x_c))   # exp( - b ( x-c) )
                 tmpB1 = tf.add(1.0,  tmpB )   # 1 + exp(- b ( x-c) )
-                tmpAB  = tf.exp(-tf.mul(tf.mul(a,x_c),tmpB1))  # exp( - a ( x-c)*(1+exp(b-c) )
+                tmpAB  = tf.exp(-tf.multiply(tf.multiply(a,x_c),tmpB1))  # exp( - a ( x-c)*(1+exp(b-c) )
                 ret = tf.div(1.0,tf.add(1.0,tmpAB))
                 return ret
 
@@ -47,7 +47,8 @@ def fit3(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返し
     train = optimizer.minimize(mserror)
 
     # 学習を始めるためにやっておかねばならないおまじない（変数の初期化）を init とおく, 
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
+    # init = tf.initialize_all_variables()
 
     # セッションを生成し、init つまり変数の初期化を実行
     with tf.Session() as sess:
@@ -67,10 +68,11 @@ def fit3(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返し
         B = sess.run(b)
         C = sess.run(c)
 
+    plt.figure(figsize=(12,10))
     plt.gca().set_aspect('equal',adjustable='box')
     plt.plot(x_data,y_data,".",color="green")
     plt.plot(x_dataRest,y_dataRest,".",color="gray")
-    plt.hold(True);
+    # plt.hold(True);
     xd = np.linspace(xmin, xmax, num)
     yd = 1.0/(1.0+np.exp(-A * (xd - C)*(1.0+np.exp(-B * (xd - C)))))
-    plt.plot(xd,yd,"-")
+    plt.plot(xd,yd,"-",color='red')

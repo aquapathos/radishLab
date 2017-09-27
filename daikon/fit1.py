@@ -27,9 +27,9 @@ def fit1(data,itr=1000,alpha=1.0,xmin=0,xmax=10, cutoff=0.2):  # itr 繰り返�
     y = tf.placeholder(tf.float32, shape=(len(y_data)))
 
     def model(a,b,x):  # 1/(1+exp(-a*(x-b)))
-        ret = tf.sub(x,b)
-        ret = tf.exp(-tf.mul(a,ret))
-        ret = tf.div(1.0,tf.add(1.0,ret))
+        ret = tf.subtract(x,b)
+        ret = tf.exp(-tf.multiply(a,ret))
+        ret = tf.divide(1.0,tf.add(1.0,ret))
         return ret
 
     # 目的関数の設定。平均自乗誤差の最小化
@@ -57,11 +57,12 @@ def fit1(data,itr=1000,alpha=1.0,xmin=0,xmax=10, cutoff=0.2):  # itr 繰り返�
 
         A = sess.run(a)
         B = sess.run(b)
-
+        
+    plt.figure(figsize=(12,10))
     plt.gca().set_aspect('equal',adjustable='box')
     plt.plot(x_data,y_data,".",color="green")
     plt.plot(x_dataRest,y_dataRest,".",color="gray")
-    plt.hold(True);
+    # plt.hold(True);
     xd = np.linspace(xmin, xmax, num)
     yd = 1.0/(1.0+np.exp(-A * (xd - B)))
     plt.plot(xd,yd,"-",color="r")

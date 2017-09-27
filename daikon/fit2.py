@@ -15,11 +15,11 @@ import matplotlib.pyplot as plt
 def fit2(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返しの回数、alpha 学習係数、cutoff y の値がこれ以下の部分は近似に使わない
 
     def model(a,b,c,x):  # 1/(1+exp(-a*(x-c)) (1+ exp(-b*(x-c))))
-                x_c = tf.sub(x,c) # x - c
-                tmpA  = tf.exp(-tf.mul(a,x_c))  # exp( - a ( x-c) )
-                tmpB = tf.exp(-tf.mul(b,x_c))   # exp( - b ( x-c) )
+                x_c = tf.subtract(x,c) # x - c
+                tmpA  = tf.exp(-tf.multiply(a,x_c))  # exp( - a ( x-c) )
+                tmpB = tf.exp(-tf.multiply(b,x_c))   # exp( - b ( x-c) )
                 tmpB1 = tf.add(1.0,  tmpB )   # 1 + exp(- b ( x-c) )
-                tmpAB = tf.mul(tmpA,tmpB1)  # exp(-a*(x-c)) (1+ exp(-b*(x-c)))
+                tmpAB = tf.multiply(tmpA,tmpB1)  # exp(-a*(x-c)) (1+ exp(-b*(x-c)))
                 ret = tf.div(1.0,tf.add(1.0,tmpAB))
                 return ret
 
@@ -46,7 +46,8 @@ def fit2(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返し
     train = optimizer.minimize(mserror)
 
     # 学習を始めるためにやっておかねばならないおまじない（変数の初期化）を init とおく, 
-    init = tf.initialize_all_variables()
+    init = tf.global_variables_initializer()
+    # init = tf.initialize_all_variables()
 
     # セッションを生成し、init つまり変数の初期化を実行
     with tf.Session() as sess:
@@ -66,10 +67,11 @@ def fit2(data,itr=1000,alpha=1.0,xmin=-5,xmax=5,cutoff=0.2):  # itr 繰り返し
         B = sess.run(b)
         C = sess.run(c)
 
+    plt.figure(figsize=(12,10))
     plt.gca().set_aspect('equal',adjustable='box')
     plt.plot(x_data,y_data,".",color="green")
     plt.plot(x_dataRest,y_dataRest,"-",color="gray")
-    plt.hold(True);
+    # plt.hold(True);
     xd = np.linspace(xmin, xmax, num)
     yd = 1.0/(1.0+np.exp(-A * (xd - C))*(1.0+np.exp(-B * (xd - C))))
-    plt.plot(xd,yd,"-")
+    plt.plot(xd,yd,"-",color='red')
